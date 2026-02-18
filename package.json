@@ -1,17 +1,15 @@
 {
-  "name": "md2phext",
-  "version": "0.2.0",
-  "description": "Pack markdown files into a phext. Query and reason about them with coordinates.",
+  "name": "phext-pack",
+  "version": "0.1.0",
+  "description": "Pack markdown files into a phext. Query them with coordinates.",
   "main": "pack.mjs",
   "bin": {
     "phext-pack": "./pack.mjs",
     "phext-query": "./query.mjs",
     "phext-toc": "./toc.mjs",
-    "phext-reason": "./reason.mjs"
+    "md2phext": "./md2phext.mjs"
   },
   "type": "module",
   "license": "MIT",
-  "dependencies": {
-    "ws": "^8.18.0"
-  }
+  "dependencies": {}
 }

@@ -1,4 +1,4 @@
-Cargo.lock
-node_modules/
 *.phext
-/target
+*.manifest.json
+node_modules/
+test-fixtures/

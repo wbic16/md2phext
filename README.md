@@ -1,14 +1,14 @@
-# md2phext
+# phext-pack / md2phext
 
-Pack a directory of markdown (or any text) files into a phext corpus. Query by coordinate, keyword, or context window. Two implementations: Node.js (zero deps) and Rust.
+Pack a directory of files into a phext. Query them by coordinate or keyword.
 
-## The Problem
+Zero dependencies. Just Node.
 
-You have a pile of documents — standards specs, design notes, exported PDFs. You want to ask an LLM questions across all of them with **verifiable citations** — not hallucinated summaries, but answers linked to the exact source file and section.
+---
 
-A phext packs your whole corpus into one file. Each document gets a coordinate. The LLM answers with coordinates. The coordinate IS the citation.
+## Tools
 
-## Node.js (Zero Dependencies)
+### `pack.mjs` — File-level packing (any file type)
 
 ```bash
 # Pack markdown files into a phext
@@ -33,86 +33,60 @@ node query.mjs output.phext --context "timing" 2
 node query.mjs output.phext --stats
 ```
 
-## Rust CLI
+Each file → one scroll. Scroll coordinates increment per file; section/chapter/book roll over at 100/10k/1M files.
+
+---
+
+### `md2phext.mjs` — Structure-aware markdown packing
 
 ```bash
-cargo install --path .
+# Convert all .md files in a directory into a structure-aware phext
+node md2phext.mjs ./my-docs output
 
-# Build phext from directory
-phext-drop build ./docs/ --output corpus.phext --manifest
-
-# Dump as LLM-ready context
-phext-drop context corpus.phext | llm "What timing constraints apply to Phase 2 TDMA?"
-
-# Show coordinate manifest
-phext-drop map corpus.phext
+# Output: output.phext + output.manifest.json
 ```
 
-## TIA-102 / LMR Use Case (Tooker Workflow)
+Each markdown heading level → a different phext dimension:
 
-```bash
-# Convert your purchased PDFs to text
-for f in TIA-102*.pdf; do pdftotext "$f" "${f%.pdf}.md"; done
+| Heading | Delimiter | Dimension |
+|---------|-----------|-----------|
+| H1      | Chapter   | 0x19 (5D) |
+| H2      | Section   | 0x18 (4D) |
+| H3+     | Scroll    | 0x17 (3D) |
+| File    | Book      | 0x1A (6D) |
 
-# Pack into phext
-node pack.mjs ./tia-102/ tia-102.phext
+Produces a `manifest.json` mapping every coordinate to its source file and heading. Cross-references between files (`[text](./other.md#section)`) are extracted as typed edges.
 
-# Query with citations
-node query.mjs tia-102.phext --context "IMBE vocoder timing" 2
-```
+Use `md2phext` when you care about section-level addressing. Use `pack` when you want file-level simplicity.
 
-The model reads your actual purchased documents — not its training data, which does not contain the full TIA-102 suite.
+---
 
-## How It Works
+## Why
 
-1. Reads all matching files from a directory (recursively, sorted)
-2. Assigns each file a phext coordinate (`1.1.1/1.1.1/1.1.N`)
-3. Embeds a coordinate header in each scroll so the LLM always knows its location
-4. Joins them with phext scroll delimiters (`\x17`)
-5. Scroll 0 = manifest/table of contents
+A phext is a single file that holds an entire document corpus with coordinates. Load it into an LLM context window and every answer comes back with a coordinate you can verify:
+
+> "The authentication timeout is defined at `1.1.1/1.1.1/1.1.7` (Section 4.3.2 of your auth spec)."
+
+The coordinate IS the citation. No embedding database. No vector store. One file, one context window, verifiable references.
+
+**vs. RAG:** RAG retrieves chunks by semantic similarity. It doesn't know dependency graphs — if parameter A is constrained by three documents, RAG may only retrieve one. Phext packs the full corpus with structural coordinates. Cross-document queries traverse the structure, not a probability distribution.
+
+---
 
 ## Phext Delimiters
 
-| Delimiter | Hex  | Dimension | Fires when |
-|-----------|------|-----------|------------|
-| Scroll    | 0x17 | 3D        | Every file (default) |
-| Section   | 0x18 | 4D        | Every 100 files |
-| Chapter   | 0x19 | 5D        | Every 10,000 files |
-| Book      | 0x1A | 6D        | Every 1,000,000 files |
+| Delimiter | Hex  | Dimension | Used by          |
+|-----------|------|-----------|------------------|
+| Scroll    | 0x17 | 3D        | H3+, small files |
+| Section   | 0x18 | 4D        | H2               |
+| Chapter   | 0x19 | 5D        | H1               |
+| Book      | 0x1A | 6D        | File boundary    |
+| Volume    | 0x1C | 7D        | (reserved)       |
+| Collection| 0x1D | 8D        | (reserved)       |
 
-## `phext-reason` — Ask questions, get cited answers
+TOC always lives at scroll 1: `1.1.1/1.1.1/1.1.1`
 
-Requires a running [OpenClaw](https://openclaw.ai) gateway.
-
-```bash
-npm install  # installs ws dependency for WebSocket support
-
-export OPENCLAW_TOKEN=$(openclaw config get gateway.token)
-
-# Single question
-node reason.mjs corpus.phext "What does BAAB say about IMBE superframe structure?"
-
-# Interactive session
-node reason.mjs corpus.phext --interactive
-```
-
-Answers include coordinate citations you can verify:
-
-```
-The IMBE superframe structure is defined at [1.1.1/1.1.1/1.1.7]:
-"A superframe consists of 18 voice frames at 20ms each..."
-```
-
-Run `node query.mjs corpus.phext --coord 1.1.1/1.1.1/1.1.7` to confirm.
-
-## `weaver.html` — Browser Tool (No Install)
-
-Open `weaver.html` directly in any browser. No server, no build step.
-
-- Drag-and-drop `.md` files
-- Builds phext corpus in memory, shows coordinate map
-- Connect to local OpenClaw gateway (URL + token)
-- Ask questions, get coordinate-cited answers, click to verify
+---
 
 ## License
 
