@@ -1,0 +1,14 @@
+[package]
+name = "phext-drop"
+version = "0.1.0"
+edition = "2021"
+description = "Drop markdown files, get a queryable phext corpus"
+
+[[bin]]
+name = "phext-drop"
+path = "src/main.rs"
+
+[dependencies]
+libphext = { path = "../libphext-rs" }
+clap = { version = "4", features = ["derive"] }
+walkdir = "2"
