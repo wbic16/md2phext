@@ -1,0 +1,14 @@
+{
+  "name": "phext-pack",
+  "version": "0.1.0",
+  "description": "Pack markdown files into a phext. Query them with coordinates.",
+  "main": "pack.mjs",
+  "bin": {
+    "phext-pack": "./pack.mjs",
+    "phext-query": "./query.mjs",
+    "phext-toc": "./toc.mjs"
+  },
+  "type": "module",
+  "license": "MIT",
+  "dependencies": {}
+}
