@@ -80,6 +80,40 @@ The model reads your actual purchased documents — not its training data, which
 | Chapter   | 0x19 | 5D        | Every 10,000 files |
 | Book      | 0x1A | 6D        | Every 1,000,000 files |
 
+## `phext-reason` — Ask questions, get cited answers
+
+Requires a running [OpenClaw](https://openclaw.ai) gateway.
+
+```bash
+npm install  # installs ws dependency for WebSocket support
+
+export OPENCLAW_TOKEN=$(openclaw config get gateway.token)
+
+# Single question
+node reason.mjs corpus.phext "What does BAAB say about IMBE superframe structure?"
+
+# Interactive session
+node reason.mjs corpus.phext --interactive
+```
+
+Answers include coordinate citations you can verify:
+
+```
+The IMBE superframe structure is defined at [1.1.1/1.1.1/1.1.7]:
+"A superframe consists of 18 voice frames at 20ms each..."
+```
+
+Run `node query.mjs corpus.phext --coord 1.1.1/1.1.1/1.1.7` to confirm.
+
+## `weaver.html` — Browser Tool (No Install)
+
+Open `weaver.html` directly in any browser. No server, no build step.
+
+- Drag-and-drop `.md` files
+- Builds phext corpus in memory, shows coordinate map
+- Connect to local OpenClaw gateway (URL + token)
+- Ask questions, get coordinate-cited answers, click to verify
+
 ## License
 
 MIT — Phext, Inc.

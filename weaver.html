@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Phext Weaver — Drop docs, reason in real-time</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Courier New', monospace; background: #0a0a0a; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
+
+    /* Header */
+    .header { background: #111; border-bottom: 1px solid #222; padding: 0.6rem 1rem; display: flex; align-items: center; gap: 1rem; flex-shrink: 0; }
+    .header h1 { font-size: 1rem; color: #c0a060; }
+    .header .tagline { font-size: 0.75rem; color: #555; }
+    .conn-status { margin-left: auto; font-size: 0.75rem; display: flex; align-items: center; gap: 0.4rem; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #444; }
+    .dot.connected { background: #60c060; }
+    .dot.error { background: #c06060; }
+
+    /* Config bar */
+    .config-bar { background: #0d0d0d; border-bottom: 1px solid #1a1a1a; padding: 0.5rem 1rem; display: flex; gap: 0.6rem; align-items: center; flex-shrink: 0; }
+    .config-bar label { font-size: 0.72rem; color: #555; white-space: nowrap; }
+    .config-bar input { background: #1a1a1a; border: 1px solid #333; color: #e0e0e0; padding: 0.25rem 0.5rem; font-family: inherit; font-size: 0.78rem; border-radius: 2px; flex: 1; }
+    .config-bar input:focus { outline: none; border-color: #c0a060; }
+    .config-bar button { background: #c0a060; color: #000; border: none; padding: 0.25rem 0.8rem; font-family: inherit; font-size: 0.78rem; font-weight: bold; border-radius: 2px; cursor: pointer; white-space: nowrap; }
+    .config-bar button:hover { background: #e0c080; }
+
+    /* Main layout */
+    .main { display: flex; flex: 1; overflow: hidden; }
+
+    /* Left panel: files + phext */
+    .left-panel { width: 340px; flex-shrink: 0; display: flex; flex-direction: column; border-right: 1px solid #1a1a1a; }
+
+    /* Drop zone */
+    .drop-zone { border: 2px dashed #333; margin: 0.8rem; padding: 1.5rem 1rem; text-align: center; border-radius: 4px; cursor: pointer; transition: border-color 0.2s, background 0.2s; flex-shrink: 0; }
+    .drop-zone:hover, .drop-zone.dragover { border-color: #c0a060; background: #0f0f00; }
+    .drop-zone .icon { font-size: 1.8rem; margin-bottom: 0.4rem; }
+    .drop-zone p { font-size: 0.8rem; color: #666; }
+    .drop-zone p strong { color: #c0a060; }
+    .drop-zone input[type=file] { display: none; }
+
+    /* File list */
+    .file-list { padding: 0 0.8rem; flex-shrink: 0; }
+    .file-list h3 { font-size: 0.7rem; color: #555; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.4rem; }
+    .file-item { display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0.4rem; font-size: 0.78rem; border-radius: 2px; cursor: pointer; }
+    .file-item:hover { background: #151515; }
+    .file-item .coord { color: #c0a060; font-size: 0.7rem; white-space: nowrap; }
+    .file-item .name { color: #b0b0b0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .file-item .remove { margin-left: auto; color: #444; cursor: pointer; font-size: 0.9rem; }
+    .file-item .remove:hover { color: #c06060; }
+
+    /* Phext preview */
+    .phext-preview { flex: 1; overflow-y: auto; margin: 0.8rem; margin-top: 0.4rem; }
+    .phext-preview h3 { font-size: 0.7rem; color: #555; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.4rem; }
+    .phext-preview pre { background: #0d0d0d; border: 1px solid #1a1a1a; padding: 0.6rem; font-size: 0.68rem; line-height: 1.5; color: #808080; border-radius: 2px; overflow: auto; max-height: 200px; white-space: pre-wrap; }
+    .phext-preview .coord-marker { color: #c0a060; font-weight: bold; }
+
+    /* Right panel: chat */
+    .chat-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+    .chat-toolbar { padding: 0.5rem 1rem; border-bottom: 1px solid #1a1a1a; display: flex; align-items: center; gap: 0.8rem; flex-shrink: 0; }
+    .chat-toolbar span { font-size: 0.75rem; color: #555; }
+    .corpus-badge { background: #1a1a1a; border: 1px solid #333; padding: 0.2rem 0.5rem; border-radius: 10px; font-size: 0.7rem; color: #c0a060; }
+    .clear-btn { margin-left: auto; background: none; border: 1px solid #333; color: #555; padding: 0.2rem 0.6rem; font-family: inherit; font-size: 0.72rem; border-radius: 2px; cursor: pointer; }
+    .clear-btn:hover { border-color: #666; color: #999; }
+
+    /* Messages */
+    .messages { flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: 0.8rem; }
+    .msg { max-width: 85%; }
+    .msg.user { align-self: flex-end; }
+    .msg.assistant { align-self: flex-start; }
+    .msg.system-notice { align-self: center; }
+    .msg-bubble { padding: 0.6rem 0.9rem; border-radius: 4px; font-size: 0.85rem; line-height: 1.5; white-space: pre-wrap; }
+    .user .msg-bubble { background: #1a1a2a; border: 1px solid #2a2a4a; color: #c0c0e0; }
+    .assistant .msg-bubble { background: #0f0f0f; border: 1px solid #222; color: #d0d0d0; }
+    .system-notice .msg-bubble { background: #0a0a0a; border: 1px solid #1a1a1a; color: #555; font-size: 0.75rem; text-align: center; }
+    .coord-cite { color: #c0a060; cursor: pointer; text-decoration: underline; font-size: 0.8em; }
+    .coord-cite:hover { color: #e0c080; }
+    .streaming { opacity: 0.7; }
+    .cursor { display: inline-block; width: 2px; height: 1em; background: #c0a060; animation: blink 1s infinite; vertical-align: text-bottom; }
+    @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
+
+    /* Input */
+    .chat-input-row { padding: 0.8rem 1rem; border-top: 1px solid #1a1a1a; display: flex; gap: 0.6rem; flex-shrink: 0; }
+    .chat-input-row textarea { flex: 1; background: #111; border: 1px solid #333; color: #e0e0e0; padding: 0.5rem 0.7rem; font-family: inherit; font-size: 0.85rem; resize: none; border-radius: 2px; min-height: 40px; max-height: 120px; }
+    .chat-input-row textarea:focus { outline: none; border-color: #c0a060; }
+    .send-btn { background: #c0a060; color: #000; border: none; padding: 0 1rem; font-family: inherit; font-size: 0.85rem; font-weight: bold; border-radius: 2px; cursor: pointer; white-space: nowrap; align-self: flex-end; height: 40px; }
+    .send-btn:hover { background: #e0c080; }
+    .send-btn:disabled { background: #333; color: #666; cursor: not-allowed; }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <h1>🔱 Phext Weaver</h1>
+  <span class="tagline">Drop markdown files → reason about them in real-time</span>
+  <div class="conn-status">
+    <div class="dot" id="connDot"></div>
+    <span id="connLabel">disconnected</span>
+  </div>
+</div>
+
+<div class="config-bar">
+  <label>Gateway:</label>
+  <input type="text" id="gwUrl" placeholder="ws://127.0.0.1:18789" style="max-width:260px">
+  <label>Token:</label>
+  <input type="password" id="gwToken" placeholder="(from: openclaw config get gateway.token)" style="max-width:340px">
+  <button id="connectBtn" onclick="connectGateway()">Connect</button>
+</div>
+
+<div class="main">
+  <!-- Left: files -->
+  <div class="left-panel">
+    <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+      <div class="icon">📂</div>
+      <p><strong>Drop .md files here</strong></p>
+      <p>or click to browse</p>
+      <input type="file" id="fileInput" multiple accept=".md,.txt" onchange="handleFiles(this.files)">
+    </div>
+
+    <div class="file-list" id="fileList" style="display:none">
+      <h3>Corpus (<span id="fileCount">0</span> files)</h3>
+      <div id="fileItems"></div>
+    </div>
+
+    <div class="phext-preview" id="phextPreview" style="display:none">
+      <h3>Phext structure</h3>
+      <pre id="phextDisplay"></pre>
+    </div>
+  </div>
+
+  <!-- Right: chat -->
+  <div class="chat-panel">
+    <div class="chat-toolbar">
+      <span>Ask anything about your corpus</span>
+      <span class="corpus-badge" id="corpusBadge">no corpus loaded</span>
+      <button class="clear-btn" onclick="clearChat()">clear</button>
+    </div>
+
+    <div class="messages" id="messages">
+      <div class="msg system-notice">
+        <div class="msg-bubble">Drop markdown files on the left to build a phext corpus,<br>then ask questions — answers include coordinate citations.</div>
+      </div>
+    </div>
+
+    <div class="chat-input-row">
+      <textarea id="chatInput" placeholder="Ask a question about your docs..." rows="1"
+        onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();sendMessage()}"
+        oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px'"></textarea>
+      <button class="send-btn" id="sendBtn" onclick="sendMessage()" disabled>Send</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── State ───────────────────────────────────────────────────────────────────
+let files = [];        // { name, coord, content }
+let ws = null;
+let connected = false;
+let pending = {};
+let msgCounter = 0;
+let streamingMsgId = null;
+let sessionKey = null;
+
+const SCROLL_DELIM = '\x17';  // phext scroll delimiter
+
+// ─── Phext Assembly ──────────────────────────────────────────────────────────
+function buildPhext() {
+  if (files.length === 0) return '';
+  // Each file = one scroll. Coordinate: 1.1.1/1.N.1/1.1.1 where N = index
+  const parts = files.map((f, i) => {
+    const coord = `1.1.1/1.${i+1}.1/1.1.1`;
+    return `[${coord} — ${f.name}]\n${f.content}`;
+  });
+  return parts.join('\n' + SCROLL_DELIM + '\n');
+}
+
+function buildCoordMap() {
+  return files.map((f, i) => `1.1.1/1.${i+1}.1/1.1.1 → ${f.name}`).join('\n');
+}
+
+function buildSystemPrompt() {
+  if (files.length === 0) return '';
+  const coordMap = buildCoordMap();
+  const phext = buildPhext();
+  return `You are a reasoning assistant for a phext document corpus.
+
+COORDINATE MAP:
+${coordMap}
+
+CORPUS:
+${phext}
+
+When answering questions:
+1. Cite exact coordinates like [1.1.1/1.2.1/1.1.1] for every claim you make
+2. Quote the relevant passage briefly
+3. If the answer requires multiple documents, cite each one
+4. If the answer is not in the corpus, say so clearly — do not hallucinate
+
+The coordinate is a verifiable citation. Every answer should be checkable.`;
+}
+
+// ─── File Handling ────────────────────────────────────────────────────────────
+function handleFiles(fileList) {
+  const readers = Array.from(fileList).map(file => {
+    return new Promise(resolve => {
+      const reader = new FileReader();
+      reader.onload = e => resolve({ name: file.name, content: e.target.result });
+      reader.readAsText(file);
+    });
+  });
+
+  Promise.all(readers).then(results => {
+    // Merge with existing, deduplicate by name
+    results.forEach(r => {
+      if (!files.find(f => f.name === r.name)) {
+        files.push({ name: r.name, content: r.content });
+      }
+    });
+    files.sort((a, b) => a.name.localeCompare(b.name));
+    renderFileList();
+    renderPhextPreview();
+    updateCorpusBadge();
+    addSystemNotice(`Loaded ${results.length} file(s). Corpus: ${files.length} scrolls.`);
+  });
+}
+
+function removeFile(name) {
+  files = files.filter(f => f.name !== name);
+  renderFileList();
+  renderPhextPreview();
+  updateCorpusBadge();
+}
+
+function renderFileList() {
+  const list = document.getElementById('fileList');
+  const items = document.getElementById('fileItems');
+  const count = document.getElementById('fileCount');
+  if (files.length === 0) { list.style.display = 'none'; return; }
+  list.style.display = 'block';
+  count.textContent = files.length;
+  items.innerHTML = files.map((f, i) => `
+    <div class="file-item">
+      <span class="coord">1.1.1/1.${i+1}.1/1.1.1</span>
+      <span class="name" title="${f.name}">${f.name}</span>
+      <span class="remove" onclick="removeFile('${f.name.replace(/'/g, "\\'")}')">✕</span>
+    </div>`).join('');
+}
+
+function renderPhextPreview() {
+  const preview = document.getElementById('phextPreview');
+  const display = document.getElementById('phextDisplay');
+  if (files.length === 0) { preview.style.display = 'none'; return; }
+  preview.style.display = 'block';
+  const lines = files.map((f, i) => {
+    const coord = `1.1.1/1.${i+1}.1/1.1.1`;
+    const preview = f.content.slice(0, 120).replace(/\n/g, ' ').trim();
+    return `${coord}\n  ${f.name}\n  ${preview}…`;
+  });
+  display.textContent = lines.join('\n\x17\n');
+}
+
+function updateCorpusBadge() {
+  const badge = document.getElementById('corpusBadge');
+  const btn = document.getElementById('sendBtn');
+  if (files.length === 0) {
+    badge.textContent = 'no corpus loaded';
+    btn.disabled = true;
+  } else {
+    const chars = files.reduce((sum, f) => sum + f.content.length, 0);
+    badge.textContent = `${files.length} scroll${files.length!==1?'s':''} · ${(chars/1000).toFixed(1)}k chars`;
+    btn.disabled = !connected;
+  }
+}
+
+// ─── Drag & Drop ──────────────────────────────────────────────────────────────
+const dropZone = document.getElementById('dropZone');
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  handleFiles(e.dataTransfer.files);
+});
+
+// ─── Gateway Client ──────────────────────────────────────────────────────────
+function loadConfig() {
+  const saved = localStorage.getItem('phext.weaver.gateway.v1');
+  if (saved) {
+    try {
+      const c = JSON.parse(saved);
+      document.getElementById('gwUrl').value = c.url || '';
+      document.getElementById('gwToken').value = c.token || '';
+    } catch {}
+  }
+  const url = document.getElementById('gwUrl');
+  if (!url.value) url.value = 'ws://127.0.0.1:18789';
+}
+
+function setConnStatus(state) {
+  const dot = document.getElementById('connDot');
+  const label = document.getElementById('connLabel');
+  dot.className = 'dot ' + (state === 'connected' ? 'connected' : state === 'error' ? 'error' : '');
+  label.textContent = state;
+  connected = state === 'connected';
+  document.getElementById('sendBtn').disabled = !connected || files.length === 0;
+  document.getElementById('connectBtn').textContent = connected ? 'Reconnect' : 'Connect';
+}
+
+function connectGateway() {
+  const url = document.getElementById('gwUrl').value.trim() || 'ws://127.0.0.1:18789';
+  const token = document.getElementById('gwToken').value.trim();
+  localStorage.setItem('phext.weaver.gateway.v1', JSON.stringify({ url, token }));
+
+  if (ws) { ws.close(); ws = null; }
+  setConnStatus('connecting…');
+
+  ws = new WebSocket(url);
+
+  ws.onopen = () => {
+    const id = nextId();
+    pending[id] = {
+      resolve: () => {
+        setConnStatus('connected');
+        addSystemNotice('Connected to OpenClaw gateway.');
+      },
+      reject: () => setConnStatus('error')
+    };
+    ws.send(JSON.stringify({ type: 'req', id, method: 'connect', params: { token } }));
+  };
+
+  ws.onmessage = e => {
+    try {
+      const frame = JSON.parse(e.data);
+      if (frame.type === 'res' && pending[frame.id]) {
+        const { resolve, reject } = pending[frame.id];
+        delete pending[frame.id];
+        frame.ok ? resolve(frame.payload) : reject(frame.error);
+      } else if (frame.type === 'event') {
+        handleEvent(frame);
+      }
+    } catch {}
+  };
+
+  ws.onerror = () => setConnStatus('error');
+  ws.onclose = () => { if (connected) { setConnStatus('disconnected'); connected = false; } };
+}
+
+function nextId() {
+  return `w-${Date.now()}-${++msgCounter}`;
+}
+
+function request(method, params) {
+  return new Promise((resolve, reject) => {
+    const id = nextId();
+    const timeout = setTimeout(() => {
+      delete pending[id];
+      reject(new Error(`Timeout: ${method}`));
+    }, 30000);
+    pending[id] = {
+      resolve: v => { clearTimeout(timeout); resolve(v); },
+      reject: e => { clearTimeout(timeout); reject(e); }
+    };
+    ws.send(JSON.stringify({ type: 'req', id, method, params: params || {} }));
+  });
+}
+
+function handleEvent(frame) {
+  if (frame.event === 'message' || frame.event === 'message.delta') {
+    const payload = frame.payload || {};
+    const role = payload.role;
+    const text = payload.text || payload.delta || '';
+    const done = payload.done || frame.event === 'message';
+
+    if (role === 'assistant' || !role) {
+      if (streamingMsgId) {
+        appendToStream(streamingMsgId, text, done);
+        if (done) streamingMsgId = null;
+      } else if (text) {
+        streamingMsgId = addMessage('assistant', text, !done);
+        if (done) streamingMsgId = null;
+      }
+    }
+  }
+}
+
+// ─── Chat ─────────────────────────────────────────────────────────────────────
+async function sendMessage() {
+  const input = document.getElementById('chatInput');
+  const text = input.value.trim();
+  if (!text || !connected) return;
+
+  input.value = '';
+  input.style.height = 'auto';
+  addMessage('user', text, false);
+
+  const systemPrompt = buildSystemPrompt();
+  const fullMessage = systemPrompt
+    ? `[CORPUS CONTEXT]\n${systemPrompt}\n\n[QUESTION]\n${text}`
+    : text;
+
+  try {
+    streamingMsgId = addMessage('assistant', '', true);
+    const key = `weaver-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    await request('send', {
+      sessionKey: 'main',
+      text: fullMessage,
+      idempotencyKey: key
+    });
+  } catch (err) {
+    if (streamingMsgId) {
+      const el = document.getElementById(streamingMsgId);
+      if (el) el.querySelector('.msg-bubble').textContent = `Error: ${err.message}`;
+      streamingMsgId = null;
+    }
+  }
+}
+
+function addMessage(role, text, streaming) {
+  const id = 'msg-' + nextId();
+  const msgs = document.getElementById('messages');
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  div.id = id;
+
+  const bubble = document.createElement('div');
+  bubble.className = 'msg-bubble' + (streaming ? ' streaming' : '');
+
+  const textNode = document.createElement('span');
+  textNode.textContent = text;
+  bubble.appendChild(textNode);
+
+  if (streaming) {
+    const cursor = document.createElement('span');
+    cursor.className = 'cursor';
+    bubble.appendChild(cursor);
+  }
+
+  div.appendChild(bubble);
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+  return id;
+}
+
+function appendToStream(id, text, done) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const bubble = el.querySelector('.msg-bubble');
+  const textSpan = bubble.querySelector('span:first-child');
+  if (textSpan) textSpan.textContent += text;
+  if (done) {
+    bubble.classList.remove('streaming');
+    const cursor = bubble.querySelector('.cursor');
+    if (cursor) cursor.remove();
+    // Highlight coordinates
+    highlightCoords(bubble);
+  }
+  el.closest('.messages') && (el.closest('.messages').scrollTop = 99999);
+}
+
+function highlightCoords(el) {
+  const html = el.querySelector('span:first-child');
+  if (!html) return;
+  const text = html.textContent;
+  // Replace [1.1.1/1.N.1/1.1.1] with clickable spans
+  const replaced = text.replace(/\[(\d+\.\d+\.\d+\/\d+\.\d+\.\d+\/\d+\.\d+\.\d+)\]/g, (match, coord) => {
+    return `<span class="coord-cite" onclick="jumpToCoord('${coord}')" title="Jump to ${coord}">[${coord}]</span>`;
+  });
+  if (replaced !== text) {
+    html.innerHTML = replaced;
+  }
+}
+
+function jumpToCoord(coord) {
+  // Find the file with this coordinate
+  const match = coord.match(/1\.1\.1\/1\.(\d+)\.1\/1\.1\.1/);
+  if (match) {
+    const idx = parseInt(match[1]) - 1;
+    if (files[idx]) {
+      addSystemNotice(`📍 ${coord} → ${files[idx].name}\n${files[idx].content.slice(0, 300)}…`);
+    }
+  }
+}
+
+function addSystemNotice(text) {
+  addMessage('system-notice', text, false);
+}
+
+function clearChat() {
+  const msgs = document.getElementById('messages');
+  msgs.innerHTML = '<div class="msg system-notice"><div class="msg-bubble">Chat cleared.</div></div>';
+  streamingMsgId = null;
+}
+
+// ─── Init ──────────────────────────────────────────────────────────────────────
+loadConfig();
+document.getElementById('chatInput').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+</script>
+</body>
+</html>
