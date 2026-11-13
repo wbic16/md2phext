@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // phext-pack: Pack a directory of markdown files into a phext
-// Zero dependencies. Uses raw phext delimiters.
+// Built on libphext: coordinates and serialization are the library's.
 //
 // Usage: phext-pack <dir> [output.phext]
 //
@@ -11,30 +11,16 @@
 
 import { readdir, readFile, writeFile, stat } from 'fs/promises';
 import { join, basename, extname } from 'path';
+import { Phext, Coordinate } from 'libphext';
 
-const SCROLL_BREAK    = '\x17'; // 3D - between scrolls
-const SECTION_BREAK   = '\x18'; // 4D
-const CHAPTER_BREAK   = '\x19'; // 5D
-const BOOK_BREAK      = '\x1A'; // 6D
-const VOLUME_BREAK    = '\x1C'; // 7D
-const COLLECTION_BREAK = '\x1D'; // 8D
+const phextLib = new Phext();
 
 const MAX_PER_DIM = 100;
 
-function coordToString(scroll, section, chapter, book, volume, collection) {
-  return `${collection}.${volume}.${book}/${chapter}.${section}.${scroll}`;
-}
-
-function delimiterForLevel(level) {
-  switch (level) {
-    case 0: return SCROLL_BREAK;
-    case 1: return SECTION_BREAK;
-    case 2: return CHAPTER_BREAK;
-    case 3: return BOOK_BREAK;
-    case 4: return VOLUME_BREAK;
-    case 5: return COLLECTION_BREAK;
-    default: return SCROLL_BREAK;
-  }
+// The display form these tools have always printed: the coordinate's
+// collection..scroll tail, with the 1.1.1 library head left implicit.
+function coordToString(c) {
+  return `${c.y.collection}.${c.y.volume}.${c.y.book}/${c.x.chapter}.${c.x.section}.${c.x.scroll}`;
 }
 
 async function collectFiles(dir, extensions = ['.md', '.txt', '.rs', '.toml', '.json']) {
@@ -55,7 +41,9 @@ async function collectFiles(dir, extensions = ['.md', '.txt', '.rs', '.toml', '.
 }
 
 function assignCoordinates(count) {
-  // Assign coordinates starting at scroll=2 (scroll=1 is TOC)
+  // Assign coordinates starting at scroll=2 (scroll=1 is TOC).
+  // The base-100 rollover is this tool's layout policy; the coordinate
+  // objects themselves are libphext's.
   const coords = [];
   for (let i = 0; i < count; i++) {
     const idx = i + 1; // 1-indexed, +1 because scroll 1 is TOC
@@ -71,7 +59,10 @@ function assignCoordinates(count) {
     const volume = (remaining % MAX_PER_DIM) + 1;
     remaining = Math.floor(remaining / MAX_PER_DIM);
     const collection = (remaining % MAX_PER_DIM) + 1;
-    coords.push({ scroll, section, chapter, book, volume, collection });
+    const c = new Coordinate();
+    c.y.collection = collection; c.y.volume = volume; c.y.book = book;
+    c.x.chapter = chapter; c.x.section = section; c.x.scroll = scroll;
+    coords.push(c);
   }
   return coords;
 }
@@ -106,48 +97,26 @@ async function main() {
   // Build TOC
   const tocLines = [`# Table of Contents`, `# Packed from: ${dir}`, `# Files: ${files.length}`, ``];
   for (let i = 0; i < files.length; i++) {
-    const c = coords[i];
-    const coordStr = coordToString(c.scroll, c.section, c.chapter, c.book, c.volume, c.collection);
-    tocLines.push(`${coordStr} :: ${files[i].name}`);
+    tocLines.push(`${coordToString(coords[i])} :: ${files[i].name}`);
   }
   const toc = tocLines.join('\n');
 
-  // Build phext: TOC at scroll 1, then each file at its coordinate
-  let phext = toc;
-
-  let prevCoord = { scroll: 1, section: 1, chapter: 1, book: 1, volume: 1, collection: 1 };
+  // Build the phext as a coordinate → scroll map and let libphext
+  // serialize it. (implode drops empty scrolls — an empty file packs
+  // to no scroll, exactly as an empty scroll carries no content.)
+  const scrolls = new Map();
+  scrolls.set(new Coordinate().to_string(), toc);
   for (let i = 0; i < files.length; i++) {
-    const c = coords[i];
     const content = await readFile(files[i].path, 'utf-8');
-
-    // Determine which delimiter to emit
-    if (c.collection !== prevCoord.collection) {
-      phext += COLLECTION_BREAK;
-    } else if (c.volume !== prevCoord.volume) {
-      phext += VOLUME_BREAK;
-    } else if (c.book !== prevCoord.book) {
-      phext += BOOK_BREAK;
-    } else if (c.chapter !== prevCoord.chapter) {
-      phext += CHAPTER_BREAK;
-    } else if (c.section !== prevCoord.section) {
-      phext += SECTION_BREAK;
-    } else {
-      phext += SCROLL_BREAK;
-    }
-
-    phext += content;
-    prevCoord = c;
+    scrolls.set(coords[i].to_string(), content);
   }
+  const phext = phextLib.implode(scrolls);
 
   await writeFile(output, phext, 'utf-8');
 
   const sizeKB = (Buffer.byteLength(phext, 'utf-8') / 1024).toFixed(1);
   console.log(`Packed ${files.length} files → ${output} (${sizeKB} KB)`);
-  console.log(`Coordinate range: 1.1.1/1.1.1/1.1.1 to ${coordToString(
-    coords[coords.length-1].scroll, coords[coords.length-1].section,
-    coords[coords.length-1].chapter, coords[coords.length-1].book,
-    coords[coords.length-1].volume, coords[coords.length-1].collection
-  )}`);
+  console.log(`Coordinate range: 1.1.1/1.1.1/1.1.1 to ${coordToString(coords[coords.length - 1])}`);
 }
 
 main().catch(err => { console.error(err); process.exit(1); });

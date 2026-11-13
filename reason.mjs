@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // phext-reason: Load a phext corpus and ask questions via OpenClaw gateway
-// Zero extra dependencies. Uses Node WebSocket via gateway protocol.
+// Phext parsing by libphext. Uses Node WebSocket via gateway protocol.
 //
 // Usage:
 //   phext-reason <file.phext> "your question here"
@@ -14,6 +14,7 @@
 import { readFile } from 'fs/promises';
 import { createInterface } from 'readline';
 import { WebSocket } from 'ws';
+import { Phext } from 'libphext';
 
 const GATEWAY_URL   = process.env.OPENCLAW_URL   || 'ws://127.0.0.1:18789';
 const GATEWAY_TOKEN = process.env.OPENCLAW_TOKEN || '';
@@ -116,21 +117,14 @@ class Gateway {
 }
 
 // ─── Phext Helpers ─────────────────────────────────────────────────────────
-const SCROLL_BREAK = '\x17';
+// Scroll enumeration is libphext's explode(): real coordinates for
+// every scroll, across every phext break — not a scroll-break split
+// with fabricated addresses.
+const phextLib = new Phext();
 
 function splitScrolls(phext) {
-  // Split and track coordinates
-  const scrolls = [];
-  let coord = { scroll: 1, section: 1, chapter: 1, book: 1, volume: 1, collection: 1 };
-  const MAX = 100;
-
-  const parts = phext.split(/[\x17\x18\x19\x1A\x1C\x1D]/);
-  // We only split on scroll breaks for coordinate purposes here
-  const rawScrolls = phext.split(SCROLL_BREAK);
-  rawScrolls.forEach((content, i) => {
-    scrolls.push({ coord: `1.1.1/1.1.1/1.1.${i + 1}`, content });
-  });
-  return scrolls;
+  return [...phextLib.explode(phext).entries()]
+    .map(([coord, content]) => ({ coord, content }));
 }
 
 function buildSystemPrompt(phext) {

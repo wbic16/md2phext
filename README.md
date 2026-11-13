@@ -2,7 +2,7 @@
 
 Pack a directory of files into a phext. Query them by coordinate or keyword.
 
-Zero dependencies. Just Node.
+Built on [libphext](https://www.npmjs.com/package/libphext) — the phext library owns coordinates, parsing, and serialization for every tool in this package. The only phext bytes handled locally are the chain framing bytes (0x02 / 0x03), which libphext-node does not expose yet. Runs on Node.
 
 ---
 
