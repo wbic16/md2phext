@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 // phext-toc: Print the table of contents from a phext file
-// Zero dependencies.
+// Built on libphext: the TOC is the phext's home scroll.
 //
 // Usage: phext-toc <file.phext>
 
 import { readFile } from 'fs/promises';
-
-const SCROLL_BREAK     = '\x17';
+import { Phext, Coordinate } from 'libphext';
 
 async function main() {
   const file = process.argv[2];
@@ -16,9 +15,9 @@ async function main() {
   }
 
   const phext = await readFile(file, 'utf-8');
-  // TOC is the first scroll (everything before the first scroll break)
-  const firstBreak = phext.indexOf(SCROLL_BREAK);
-  const toc = firstBreak === -1 ? phext : phext.slice(0, firstBreak);
+  // TOC is the first scroll: the scroll at the home coordinate,
+  // parsed out by libphext rather than by scanning for a break byte.
+  const toc = new Phext().explode(phext).get(new Coordinate().to_string()) ?? '';
   console.log(toc);
 }
 

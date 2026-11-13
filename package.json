@@ -11,5 +11,7 @@
   },
   "type": "module",
   "license": "MIT",
-  "dependencies": {}
+  "dependencies": {
+    "libphext": "^0.4.0"
+  }
 }

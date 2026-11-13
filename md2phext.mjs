@@ -19,39 +19,25 @@
  *   node md2phext.js --chain <name> <dir1> <dir2> [dir3 ...]
  *                                            → one multiverse stream: each dir a universe,
  *                                              joined by 0x02, closed by 0x03 (libphext 0.6)
+ *
+ * Phext coordinates and serialization come from libphext (the phext
+ * library) — this tool lays markdown structure out at coordinates and
+ * lets the library serialize. The only phext bytes handled locally are
+ * the chain framing bytes (0x02 / 0x03): libphext-node predates chains,
+ * so chain composition lives here until the JS library reaches parity
+ * with libphext-rs 0.6.
  */
 
 import { readdir, readFile, writeFile } from 'fs/promises';
 import { join, basename, extname } from 'path';
+import { Phext, Coordinate } from 'libphext';
 
-// Phext delimiters
-const SCROLL     = '\x17'; // 3D — within a section
-const SECTION    = '\x18'; // 4D — H2 boundary
-const CHAPTER    = '\x19'; // 5D — H1 boundary
-const BOOK       = '\x1A'; // 6D — file boundary
-const VOLUME     = '\x1C'; // 7D — future use
-const COLLECTION = '\x1D'; // 8D — future use
-const CHAIN_BREAK = '\x02'; // stream level — separates whole phexts (universes) within a chain
+const phextLib = new Phext();
+
+// Chain framing (libphext-rs 0.6): separates / terminates whole phexts
+// (universes) within one stream. See the header note.
+const CHAIN_BREAK = '\x02'; // stream level — separates universes within a chain
 const CHAIN_CLOSE = '\x03'; // stream level — terminates a chain
-
-// Coordinate tracker
-class CoordTracker {
-  constructor() { this.reset(); }
-  reset() {
-    this.library = 1; this.shelf = 1; this.series = 1;
-    this.collection = 1; this.volume = 1; this.book = 1;
-    this.chapter = 1; this.section = 1; this.scroll = 1;
-  }
-  current() {
-    return `${this.library}.${this.shelf}.${this.series}` +
-           `/${this.collection}.${this.volume}.${this.book}` +
-           `/${this.chapter}.${this.section}.${this.scroll}`;
-  }
-  nextBook()    { this.book++;    this.chapter = 1; this.section = 1; this.scroll = 1; }
-  nextChapter() { this.chapter++; this.section = 1; this.scroll = 1; }
-  nextSection() { this.section++; this.scroll = 1; }
-  nextScroll()  { this.scroll++; }
-}
 
 // Extract cross-references from markdown
 function extractLinks(content, sourceFile) {
@@ -108,10 +94,12 @@ async function packDir(inputDir) {
     process.exit(1);
   }
 
-  const coord = new CoordTracker();
+  // The pack is a coordinate → scroll map, serialized by libphext's
+  // implode() at the end. Coordinate advance is the library's too.
+  const coord = new Coordinate();
+  const scrolls = new Map();
   const manifest = [];
   const allLinks = [];
-  const phextParts = [];
 
   // Header scroll: index of all files
   const indexLines = [
@@ -124,22 +112,22 @@ async function packDir(inputDir) {
     '|-----------|------|--------------|',
   ];
 
-  // Reserve book 1 for the index — will fill in after processing
-  const indexCoord = coord.current();
-  coord.nextBook();
-  phextParts.push(''); // placeholder, filled in after
+  // Reserve book 1 for the index — filled in after processing
+  const indexCoord = coord.to_string();
+  coord.book_break();
 
   // Process each file
   for (const filePath of mdFiles) {
     const filename = basename(filePath);
-    const fileCoord = coord.current();
+    const fileCoord = coord.to_string();
     const content = await readFile(filePath, 'utf8');
     const segments = parseMarkdown(content);
     const links = extractLinks(content, filename);
     allLinks.push(...links);
 
     let fileFirstHeading = null;
-    const fileParts = [];
+    let segmentsInFile = 0;
+    let lastKey = null;
 
     for (const seg of segments) {
       const text = (seg.heading ? `# ${seg.heading}\n` : '') + seg.body.join('\n');
@@ -148,49 +136,42 @@ async function packDir(inputDir) {
 
       if (seg.level === 1) {
         // H1 → CHAPTER boundary (except first segment in a file)
-        if (fileParts.length > 0) {
-          fileParts.push(CHAPTER);
-          coord.nextChapter();
-        }
+        if (segmentsInFile > 0) coord.chapter_break();
       } else if (seg.level === 2) {
         // H2 → SECTION boundary
-        if (fileParts.length > 0) {
-          fileParts.push(SECTION);
-          coord.nextSection();
-        }
+        if (segmentsInFile > 0) coord.section_break();
       } else if (seg.level >= 3) {
         // H3+ → SCROLL boundary
-        if (fileParts.length > 0) {
-          fileParts.push(SCROLL);
-          coord.nextScroll();
-        }
+        if (segmentsInFile > 0) coord.scroll_break();
       } else {
         // Body text → append to current scroll, no coord advance
-        if (fileParts.length > 0) {
-          fileParts[fileParts.length - 1] += '\n' + text;
-          continue; // don't push new part or record manifest entry
+        if (segmentsInFile > 0) {
+          scrolls.set(lastKey, scrolls.get(lastKey) + '\n' + text);
+          continue; // don't record a manifest entry
         }
       }
 
       // Capture coord AFTER advancing
+      const key = coord.to_string();
       manifest.push({
-        coord: coord.current(),
+        coord: key,
         file: filename,
         heading: seg.heading,
         level: seg.level,
       });
 
-      fileParts.push(text);
+      scrolls.set(key, text);
+      lastKey = key;
+      segmentsInFile++;
     }
 
     indexLines.push(`| \`${fileCoord}\` | ${filename} | ${fileFirstHeading || '(none)'} |`);
-    phextParts.push(fileParts.join(''));
-    coord.nextBook();
+    coord.book_break();
   }
 
   // Cross-reference section
   if (allLinks.length > 0) {
-    const xrefCoord = coord.current();
+    const xrefCoord = coord.to_string();
     const xrefLines = [
       '# Cross-References',
       '',
@@ -198,15 +179,17 @@ async function packDir(inputDir) {
       '|------------|----------|--------|',
       ...allLinks.map(l => `| ${l.source} | ${l.text} | ${l.target} |`),
     ];
-    phextParts.push(xrefLines.join('\n'));
+    scrolls.set(xrefCoord, xrefLines.join('\n'));
     indexLines.push(`| \`${xrefCoord}\` | (cross-references) | ${allLinks.length} links |`);
   }
 
   // Fill in index scroll
-  phextParts[0] = indexLines.join('\n');
+  scrolls.set(indexCoord, indexLines.join('\n'));
 
-  // Assemble phext with BOOK delimiters between files
-  const phextContent = phextParts.join(BOOK);
+  // Serialize with libphext. Note: implode drops empty scrolls (an
+  // empty scroll carries no content) — coordinates of every non-empty
+  // scroll are exactly the ones recorded in the manifest.
+  const phextContent = phextLib.implode(scrolls);
 
   return {
     phextContent,
