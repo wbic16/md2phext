@@ -16,6 +16,9 @@
  *   node md2phext.js <input-dir> [output-name]
  *   node md2phext.js ./docs standards        → standards.phext + standards.manifest.json
  *   node md2phext.js ./docs                  → out.phext + out.manifest.json
+ *   node md2phext.js --chain <name> <dir1> <dir2> [dir3 ...]
+ *                                            → one multiverse stream: each dir a universe,
+ *                                              joined by 0x02, closed by 0x03 (libphext 0.6)
  */
 
 import { readdir, readFile, writeFile } from 'fs/promises';
@@ -28,6 +31,8 @@ const CHAPTER    = '\x19'; // 5D — H1 boundary
 const BOOK       = '\x1A'; // 6D — file boundary
 const VOLUME     = '\x1C'; // 7D — future use
 const COLLECTION = '\x1D'; // 8D — future use
+const CHAIN_BREAK = '\x02'; // stream level — separates whole phexts (universes) within a chain
+const CHAIN_CLOSE = '\x03'; // stream level — terminates a chain
 
 // Coordinate tracker
 class CoordTracker {
@@ -90,7 +95,7 @@ function parseMarkdown(content) {
   return segments;
 }
 
-async function convert(inputDir, outputName) {
+async function packDir(inputDir) {
   // Collect .md files
   const entries = await readdir(inputDir);
   const mdFiles = entries
@@ -203,27 +208,63 @@ async function convert(inputDir, outputName) {
   // Assemble phext with BOOK delimiters between files
   const phextContent = phextParts.join(BOOK);
 
+  return {
+    phextContent,
+    manifestData: {
+      generated: new Date().toISOString(),
+      source: inputDir,
+      files: mdFiles.map(f => basename(f)),
+      coordinates: manifest,
+      crossRefs: allLinks,
+    },
+    fileCount: mdFiles.length,
+    segmentCount: manifest.length,
+    manifest,
+  };
+}
+
+async function convert(inputDir, outputName) {
+  const pack = await packDir(inputDir);
+
   // Write outputs
   const phextPath = `${outputName}.phext`;
   const manifestPath = `${outputName}.manifest.json`;
 
-  await writeFile(phextPath, phextContent, 'utf8');
-  await writeFile(manifestPath, JSON.stringify({
-    generated: new Date().toISOString(),
-    source: inputDir,
-    files: mdFiles.map(f => basename(f)),
-    coordinates: manifest,
-    crossRefs: allLinks,
-  }, null, 2), 'utf8');
+  await writeFile(phextPath, pack.phextContent, 'utf8');
+  await writeFile(manifestPath, JSON.stringify(pack.manifestData, null, 2), 'utf8');
 
-  console.log(`✓ ${phextPath}  (${phextContent.length} bytes, ${mdFiles.length} files)`);
-  console.log(`✓ ${manifestPath}  (${manifest.length} segments indexed)`);
+  console.log(`✓ ${phextPath}  (${pack.phextContent.length} bytes, ${pack.fileCount} files)`);
+  console.log(`✓ ${manifestPath}  (${pack.segmentCount} segments indexed)`);
 
   // Print coordinate summary
   console.log('\nCoordinate map:');
-  for (const entry of manifest.filter(e => e.heading)) {
+  for (const entry of pack.manifest.filter(e => e.heading)) {
     console.log(`  ${entry.coord}  →  ${entry.file}${entry.heading ? ' # ' + entry.heading : ''}`);
   }
+}
+
+// Chain mode (libphext 0.6): pack several directories as ONE multiverse stream —
+// each directory becomes a universe, joined by CHAIN_BREAK (0x02) and terminated
+// by CHAIN_CLOSE (0x03). Address a universe's scrolls as $N:<coordinate>.
+async function convertChain(inputDirs, outputName) {
+  const packs = [];
+  for (const dir of inputDirs) {
+    packs.push(await packDir(dir));
+  }
+  const stream = packs.map(p => p.phextContent).join(CHAIN_BREAK) + CHAIN_CLOSE;
+  const phextPath = `${outputName}.phext`;
+  const manifestPath = `${outputName}.manifest.json`;
+  await writeFile(phextPath, stream, 'utf8');
+  await writeFile(manifestPath, JSON.stringify({
+    generated: new Date().toISOString(),
+    chain: true,
+    universes: packs.map((p, i) => ({ universe: i + 1, ...p.manifestData })),
+  }, null, 2), 'utf8');
+  console.log(`✓ ${phextPath}  (${stream.length} bytes, ${packs.length} universes)`);
+  console.log(`✓ ${manifestPath}  (${packs.reduce((n, p) => n + p.segmentCount, 0)} segments indexed)`);
+  packs.forEach((p, i) => {
+    console.log(`  $${i + 1} ← ${p.manifestData.source} (${p.fileCount} files)`);
+  });
 }
 
 // Entry point
@@ -232,10 +273,23 @@ if (args.length < 1) {
   console.error('Usage: node md2phext.js <input-dir> [output-name]');
   process.exit(1);
 }
-const inputDir = args[0];
-const outputName = args[1] || 'out';
+if (args[0] === '--chain') {
+  const outputName = args[1];
+  const inputDirs = args.slice(2);
+  if (!outputName || inputDirs.length < 2) {
+    console.error('Usage: node md2phext.js --chain <output-name> <dir1> <dir2> [dir3 ...]');
+    process.exit(1);
+  }
+  convertChain(inputDirs, outputName).catch(err => {
+    console.error('Error:', err.message);
+    process.exit(1);
+  });
+} else {
+  const inputDir = args[0];
+  const outputName = args[1] || 'out';
 
-convert(inputDir, outputName).catch(err => {
-  console.error('Error:', err.message);
-  process.exit(1);
-});
+  convert(inputDir, outputName).catch(err => {
+    console.error('Error:', err.message);
+    process.exit(1);
+  });
+}
